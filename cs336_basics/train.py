@@ -1,8 +1,13 @@
 """Command-line entry point for Transformer LM training."""
 
 import argparse
-from pathlib import Path
+import json
 import random
+from math import isfinite
+from pathlib import Path
+from tempfile import mkdtemp
+from time import perf_counter
+from typing import TextIO
 
 import numpy as np
 import numpy.typing as npt
@@ -18,7 +23,7 @@ from .learning_rate_schedule import get_lr_cosine_schedule
 
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
 
     data = parser.add_argument_group("data")
@@ -48,6 +53,9 @@ def parse_args() -> argparse.Namespace:
     training.add_argument("--seed", type=int, default=42)
 
     output = parser.add_argument_group("logging and checkpoints")
+    output.add_argument(
+        "--run-dir", type=Path, help="New experiment directory. Defaults to a unique directory under artifacts/runs."
+    )
     output.add_argument("--log-every", type=int, default=10)
     output.add_argument("--eval-every", type=int, default=100)
     output.add_argument("--eval-batches", type=int, default=10)
@@ -55,7 +63,29 @@ def parse_args() -> argparse.Namespace:
     output.add_argument("--checkpoint-every", type=int, default=100)
     output.add_argument("--resume", type=Path, help="Path to a checkpoint to resume from.")
 
-    return parser.parse_args()
+    return parser.parse_args(argv)
+
+
+def log_loss(
+    metrics: TextIO | None,
+    split: str,
+    step: int,
+    elapsed_sec: float,
+    loss: float,
+    *,
+    lr: float | None = None,
+) -> None:
+    print(f"step {step} | {elapsed_sec:.2f}s | {split} loss: {loss:.6f}", flush=True)
+    if metrics is not None:
+        record = {
+            "split": split,
+            "step": step,
+            "elapsed_sec": elapsed_sec,
+            "loss": loss if isfinite(loss) else None,
+        }
+        if lr is not None:
+            record["lr"] = lr
+        metrics.write(json.dumps(record, allow_nan=False) + "\n")
 
 
 def train(
@@ -64,13 +94,14 @@ def train(
     train_data: npt.NDArray[np.integer],
     val_data: npt.NDArray[np.integer],
     args: argparse.Namespace,
+    *,
+    metrics: TextIO | None = None,
 ) -> None:
     """Run training, periodic validation, and checkpointing."""
     current_step = 0
     if args.resume:
         current_step = load_checkpoint(args.resume, model, optimizer) + 1
-    training_loss = []
-    validation_loss = []
+    started_at = perf_counter()
     for step in range(current_step, args.max_steps):
         lr = get_lr_cosine_schedule(
             it=step,
@@ -90,15 +121,16 @@ def train(
         gradient_clipping(model.parameters(), args.max_grad_norm)
         optimizer.step()
 
-        if step % args.log_every == 0 and step != 0:
-            print("training loss: ", loss_train.item())
-            training_loss.append(loss_train.item())
+        final_step = step + 1 == args.max_steps
+        if final_step or (step != 0 and step % args.log_every == 0):
+            train_loss = loss_train.item()
+            log_loss(metrics, "train", step + 1, perf_counter() - started_at, train_loss, lr=lr)
 
-        if step % args.checkpoint_every == 0 and step != 0:
+        if final_step or (step != 0 and step % args.checkpoint_every == 0):
             args.checkpoint_dir.mkdir(parents=True, exist_ok=True)
             save_checkpoint(model, optimizer, step, args.checkpoint_dir / f"step_{step}.ckpt")
 
-        if step % args.eval_every == 0 and step != 0:
+        if final_step or (step != 0 and step % args.eval_every == 0):
             with torch.no_grad():
                 total_loss_val = 0.0
                 for _ in range(args.eval_batches):
@@ -106,15 +138,11 @@ def train(
                     y_val_pred = model(x_val)
                     loss_val = cross_entropy(y_val_pred, y_val)
                     total_loss_val += loss_val.item()
-                print("validation loss: ", total_loss_val / args.eval_batches)
-                validation_loss.append(total_loss_val / args.eval_batches)
+                val_loss = total_loss_val / args.eval_batches
+                log_loss(metrics, "val", step + 1, perf_counter() - started_at, val_loss)
 
-
-
-
-
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> Path:
+    args = parse_args(argv)
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -138,7 +166,22 @@ def main() -> None:
         eps=args.eps,
         weight_decay=args.weight_decay,
     )
-    train(model, optimizer, train_data, val_data, args)
+    if args.run_dir is None:
+        runs_root = Path("artifacts/runs")
+        runs_root.mkdir(parents=True, exist_ok=True)
+        args.run_dir = Path(mkdtemp(prefix="run-", dir=runs_root))
+    else:
+        try:
+            args.run_dir.mkdir(parents=True)
+        except FileExistsError:
+            raise SystemExit(f"Run directory already exists: {args.run_dir}. Choose a new --run-dir.") from None
+
+    config = json.dumps(vars(args), indent=2, default=str)
+    (args.run_dir / "config.json").write_text(config + "\n", encoding="utf-8")
+    print(f"Run directory: {args.run_dir}", flush=True)
+    with (args.run_dir / "metrics.jsonl").open("x", encoding="utf-8", buffering=1) as metrics:
+        train(model, optimizer, train_data, val_data, args, metrics=metrics)
+    return args.run_dir
 
 
 if __name__ == "__main__":

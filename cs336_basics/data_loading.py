@@ -25,6 +25,6 @@ def get_batch(
         x = dataset[start:start+context_length]
         y = dataset[start+1:start+context_length+1]
 
-        x_result[batch] = torch.as_tensor(x, dtype=torch.long, device=device)
-        y_result[batch] = torch.as_tensor(y, dtype=torch.long, device=device)
+        x_result[batch] = torch.as_tensor(x.copy(), dtype=torch.long, device=device)
+        y_result[batch] = torch.as_tensor(y.copy(), dtype=torch.long, device=device)
     return x_result, y_result
