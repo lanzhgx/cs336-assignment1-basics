@@ -38,12 +38,14 @@ class MultiheadSelfAttention(nn.Module):
         q_reshaped = q.reshape(q.shape[0], -1, self.num_heads, self.d).transpose(-2, -3)
         k_reshaped = k.reshape(q.shape[0], -1, self.num_heads, self.d).transpose(-2, -3)
         if self.use_rope:
-            self.token_positions = self.token_positions if self.token_positions else torch.arange(x.shape[-2], device=x.device)
-            q_reshaped = self.rope(q_reshaped, self.token_positions)
-            k_reshaped = self.rope(k_reshaped, self.token_positions)
+            token_positions = self.token_positions
+            if token_positions is None:
+                token_positions = torch.arange(x.shape[-2], device=x.device)
+            q_reshaped = self.rope(q_reshaped, token_positions)
+            k_reshaped = self.rope(k_reshaped, token_positions)
         v_reshaped = v.reshape(q.shape[0], -1, self.num_heads, self.d).transpose(-2, -3)
 
-        mask = ~torch.triu(torch.ones((q.shape[0], self.num_heads, q.shape[1], q.shape[1]), dtype=torch.bool), diagonal=1)
+        mask = ~torch.triu(torch.ones((q.shape[0], self.num_heads, q.shape[1], q.shape[1]), dtype=torch.bool, device=x.device), diagonal=1)
         attention = scaled_dot_product_attention(Q=q_reshaped, K=k_reshaped, V=v_reshaped, mask=mask)
 
         return self.Wo(attention.transpose(-2, -3).reshape(q.shape[0], -1, self.d_model))

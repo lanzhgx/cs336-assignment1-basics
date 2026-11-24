@@ -165,3 +165,7 @@ cython_debug/
 # data and artifacts
 artifacts/
 data/
+
+# Model checkpoints
+/checkpoints/
+*.ckpt
