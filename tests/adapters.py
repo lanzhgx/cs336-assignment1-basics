@@ -518,21 +518,22 @@ def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, "
 
 
 def run_cross_entropy(
-    inputs: Float[Tensor, " batch_size vocab_size"], targets: Int[Tensor, " batch_size"]
+    inputs: Float[Tensor, " *batch vocab_size"], targets: Int[Tensor, " *batch"]
 ) -> Float[Tensor, ""]:
     """Given a tensor of inputs and targets, compute the average cross-entropy
     loss across examples.
 
     Args:
-        inputs (Float[Tensor, "batch_size vocab_size"]): inputs[i][j] is the
-            unnormalized logit of jth class for the ith example.
-        targets (Int[Tensor, "batch_size"]): Tensor of shape (batch_size,) with the index of the correct class.
+        inputs: Logits with vocabulary size in the last dimension.
+        targets: Indices of the correct classes, one for each leading position in inputs.
             Each value must be between 0 and `num_classes - 1`.
 
     Returns:
         Float[Tensor, ""]: The average cross-entropy loss across examples.
     """
-    raise NotImplementedError
+    from cs336_basics.cross_entropy import cross_entropy
+
+    return cross_entropy(inputs, targets)
 
 
 def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float) -> None:
@@ -544,14 +545,18 @@ def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm:
 
     The gradients of the parameters (parameter.grad) should be modified in-place.
     """
-    raise NotImplementedError
+    from cs336_basics.gradient_clipping import gradient_clipping
+
+    gradient_clipping(parameters, max_l2_norm)
 
 
 def get_adamw_cls() -> Any:
     """
     Returns a torch.optim.Optimizer that implements AdamW.
     """
-    raise NotImplementedError
+    from cs336_basics.adamw import AdamW
+
+    return AdamW
 
 
 def run_get_lr_cosine_schedule(
@@ -560,7 +565,7 @@ def run_get_lr_cosine_schedule(
     min_learning_rate: float,
     warmup_iters: int,
     cosine_cycle_iters: int,
-):
+) -> float:
     """
     Given the parameters of a cosine learning rate decay schedule (with linear
     warmup) and an iteration number, return the learning rate at the given
@@ -574,12 +579,20 @@ def run_get_lr_cosine_schedule(
             the cosine learning rate schedule (with warmup).
         warmup_iters (int): T_w, the number of iterations to linearly warm-up
             the learning rate.
-        cosine_cycle_iters (int): T_c, the number of cosine annealing iterations.
+        cosine_cycle_iters (int): T_c, the iteration at which cosine decay ends.
 
     Returns:
         Learning rate at the given iteration under the specified schedule.
     """
-    raise NotImplementedError
+    from cs336_basics.learning_rate_schedule import get_lr_cosine_schedule
+
+    return get_lr_cosine_schedule(
+        it=it,
+        max_learning_rate=max_learning_rate,
+        min_learning_rate=min_learning_rate,
+        warmup_iters=warmup_iters,
+        cosine_cycle_iters=cosine_cycle_iters,
+    )
 
 
 def run_save_checkpoint(

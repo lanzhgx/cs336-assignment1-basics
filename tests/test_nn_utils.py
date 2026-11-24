@@ -59,6 +59,17 @@ def test_cross_entropy():
     )
 
 
+def test_cross_entropy_with_sequence_dimension():
+    inputs = torch.tensor([
+        [[2.0, -1.0, 0.0, 1.0], [-1.0, 0.0, 3.0, 2.0]],
+        [[0.0, 3.0, 1.0, -1.0], [1.0, 0.0, -1.0, 2.0]],
+    ])
+    targets = torch.tensor([[3, 2], [1, 0]])
+    expected = F.cross_entropy(inputs.flatten(0, 1), targets.flatten())
+
+    torch.testing.assert_close(run_cross_entropy(inputs, targets), expected)
+
+
 def test_gradient_clipping():
     tensors = [torch.randn((5, 5)) for _ in range(6)]
     max_norm = 1e-2
