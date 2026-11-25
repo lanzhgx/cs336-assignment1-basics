@@ -42,7 +42,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     training = parser.add_argument_group("training")
     training.add_argument("--batch-size", type=int, default=16)
-    training.add_argument("--max-steps", type=int, default=1_000)
+    training.add_argument("--max-steps", type=int, default=1_000, help="Total updates planned for the LR schedule.")
+    training.add_argument(
+        "--stop-after",
+        type=int,
+        help="Stop after this many total updates, including updates before --resume.",
+    )
     training.add_argument("--max-lr", type=float, default=3e-4)
     training.add_argument("--min-lr", type=float, default=3e-5)
     training.add_argument("--warmup-steps", type=int, default=100)
@@ -63,7 +68,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     output.add_argument("--checkpoint-every", type=int, default=100)
     output.add_argument("--resume", type=Path, help="Path to a checkpoint to resume from.")
 
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.stop_after is not None and not 1 <= args.stop_after <= args.max_steps:
+        parser.error("--stop-after must be between 1 and --max-steps")
+    return args
 
 
 def log_loss(
@@ -101,8 +109,13 @@ def train(
     current_step = 0
     if args.resume:
         current_step = load_checkpoint(args.resume, model, optimizer) + 1
+    stop_after = getattr(args, "stop_after", None)
+    end_step = args.max_steps if stop_after is None else stop_after
+    if stop_after is not None and current_step >= end_step:
+        raise ValueError(f"The checkpoint has already reached --stop-after {end_step}.")
+
     started_at = perf_counter()
-    for step in range(current_step, args.max_steps):
+    for step in range(current_step, end_step):
         lr = get_lr_cosine_schedule(
             it=step,
             max_learning_rate=args.max_lr,
@@ -121,7 +134,7 @@ def train(
         gradient_clipping(model.parameters(), args.max_grad_norm)
         optimizer.step()
 
-        final_step = step + 1 == args.max_steps
+        final_step = step + 1 == end_step
         if final_step or (step != 0 and step % args.log_every == 0):
             train_loss = loss_train.item()
             log_loss(metrics, "train", step + 1, perf_counter() - started_at, train_loss, lr=lr)
